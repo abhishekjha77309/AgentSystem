@@ -1,0 +1,173 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitives & Helpers ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && data.ownerId == request.auth.uid;
+    }
+
+    // --- Validation Helpers ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && data.createdAt is int
+        && (!data.keys().hasAny(['settings']) || data.settings is map)
+        && data.keys().size() <= 6; 
+    }
+
+    function isValidWorkspace(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'title', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.ownerId == request.auth.uid
+        && data.title is string && data.title.size() <= 500
+        && data.createdAt is int
+        && data.updatedAt is int
+        && data.keys().size() == 5;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['id', 'workspaceId', 'senderId', 'role', 'content', 'createdAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.workspaceId is string && data.workspaceId.size() <= 128
+        && data.senderId == request.auth.uid
+        && data.role in ['user', 'model', 'system']
+        && data.content is string && data.content.size() <= 100000
+        && data.createdAt is int
+        && data.keys().size() <= 8; // allow for metadata
+    }
+
+    function isValidCellKnowledge(data) {
+      return data.keys().hasAll(['taskSignature', 'bestConfig', 'successScore', 'lastUsed'])
+        && data.taskSignature is string && data.taskSignature.size() <= 512
+        && data.successScore is number && data.successScore >= 0 && data.successScore <= 1.0
+        && data.lastUsed is int
+        && data.bestConfig is map
+        && data.keys().size() == 4;
+    }
+
+    function isValidNetworkSession(data) {
+      return data.keys().hasAll(['id', 'workspaceId', 'activeCellIds', 'chatHistory'])
+        && data.id is string && data.id.size() <= 128
+        && data.workspaceId is string && data.workspaceId.size() <= 128
+        && data.activeCellIds is list && data.activeCellIds.size() <= 50
+        && data.chatHistory is list && data.chatHistory.size() <= 1000
+        && data.keys().size() <= 6;
+    }
+
+    function isValidCentralKnowledge(data) {
+      return data.keys().hasAll(['id', 'workspaceId', 'rawContext'])
+        && data.id is string && data.id.size() <= 128
+        && data.workspaceId is string && data.workspaceId.size() <= 128
+        && data.rawContext is string && data.rawContext.size() <= 1000000
+        && data.keys().size() <= 6;
+    }
+
+    function isValidNetworkStatus(data) {
+      return data.keys().hasAll(['isConnected', 'peerCount', 'meshId', 'updatedAt'])
+        && data.isConnected is bool
+        && data.peerCount is number
+        && data.meshId is string && data.meshId.size() <= 256
+        && (data.updatedAt is timestamp || data.updatedAt is number);
+    }
+
+    // --- Match Groups ---
+
+    match /users/{userId} {
+      allow get: if isVerified() && userId == request.auth.uid;
+      allow create: if isVerified() && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isVerified() && userId == request.auth.uid 
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['settings', 'displayName', 'photoURL']);
+    }
+
+    match /workspaces/{workspaceId} {
+      allow get: if isVerified() && isOwner(existing());
+      allow list: if isVerified() && resource.data.ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(workspaceId) && isValidWorkspace(incoming());
+      allow update: if isVerified() && isOwner(existing())
+        && incoming().ownerId == existing().ownerId
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']);
+      allow delete: if isVerified() && isOwner(existing());
+
+      match /messages/{messageId} {
+        // Master Gate: Derive from parent workspace
+        allow get, list: if isVerified() && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+        allow create: if isVerified() && isValidId(messageId) && isValidMessage(incoming())
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    match /cell_knowledge/{knowledgeId} {
+      // Shared Brain: Verified users can read and record success
+      allow read: if isVerified();
+      allow create: if isVerified() && isValidId(knowledgeId) && isValidCellKnowledge(incoming());
+      // Updates usually don't happen often, maybe scoring? For now, block to sabotage.
+      allow update: if false; 
+    }
+
+    match /cells/{cellId} {
+      // Implementation choice: Cells could be global or private. Current blueprint doesn't have workspaceId.
+      // We'll set them to verified only for now.
+      allow read, write: if isVerified() && isValidId(cellId);
+    }
+
+    match /network_sessions/{sessionId} {
+      allow get: if isVerified() && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid;
+      allow list: if isVerified() && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(sessionId) && isValidNetworkSession(incoming())
+        && get(/databases/$(database)/documents/workspaces/$(incoming().workspaceId)).data.ownerId == request.auth.uid;
+      allow update: if isVerified() 
+        && get(/databases/$(database)/documents/workspaces/$(existing().workspaceId)).data.ownerId == request.auth.uid
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['activeCellIds', 'chatHistory']);
+    }
+
+    match /central_knowledge/{knowledgeId} {
+      allow get: if isVerified() && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid;
+      allow list: if isVerified() && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(knowledgeId) && isValidCentralKnowledge(incoming())
+        && get(/databases/$(database)/documents/workspaces/$(incoming().workspaceId)).data.ownerId == request.auth.uid;
+      allow update: if isVerified()
+        && get(/databases/$(database)/documents/workspaces/$(existing().workspaceId)).data.ownerId == request.auth.uid
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['rawContext', 'distilledInsights', 'contextKeeperId']);
+    }
+
+    match /network_status/{statusId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isValidId(statusId) && isValidNetworkStatus(incoming());
+    }
+  }
+}

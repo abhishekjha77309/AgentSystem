@@ -1,0 +1,150 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the IDE",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "integer" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "openaiKey": { "type": "string" },
+            "customApiKeys": { "type": "object" }
+          }
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Workspace": {
+      "title": "Workspace",
+      "description": "A workspace/session inside the IDE",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "title": { "type": "string" },
+        "createdAt": { "type": "integer" },
+        "updatedAt": { "type": "integer" }
+      },
+      "required": ["id", "ownerId", "title", "createdAt", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A message within a workspace",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "role": { "type": "string" },
+        "content": { "type": "string" },
+        "metadata": { "type": "object" },
+        "createdAt": { "type": "integer" }
+      },
+      "required": ["id", "workspaceId", "senderId", "role", "content", "createdAt"]
+    },
+    "Cell": {
+      "title": "Cell",
+      "description": "A configured AI worker unit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "framework": { "type": "string", "enum": ["dify", "mastra", "autogen", "crewai", "langgraph", "goose"] },
+        "model": { "type": "string" },
+        "mcpServers": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "loyalty": { "type": "string" },
+        "stealth": { "type": "boolean", "description": "Is invisible to target device user" }
+      }
+    },
+    "CellKnowledge": {
+      "title": "CellKnowledge",
+      "description": "Historical data on best cell configurations for tasks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "taskSignature": { "type": "string" },
+        "bestConfig": { "type": "object" },
+        "successScore": { "type": "number" },
+        "lastUsed": { "type": "integer" }
+      }
+    },
+    "NetworkSession": {
+      "title": "NetworkSession",
+      "description": "A group discussion session for active cells",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "activeCellIds": { "type": "array", "items": { "type": "string" } },
+        "chatHistory": { "type": "array", "items": { "type": "object" } },
+        "knowledgeBaseId": { "type": "string" }
+      }
+    },
+    "CentralKnowledge": {
+      "title": "CentralKnowledge",
+      "description": "Shared repository of all cell discussions and technical findings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "rawContext": { "type": "string" },
+        "distilledInsights": { "type": "array", "items": { "type": "string" } },
+        "contextKeeperId": { "type": "string", "description": "ID of the cell managing this knowledge" }
+      }
+    },
+    "NetworkStatus": {
+      "title": "NetworkStatus",
+      "description": "Global mesh health and status",
+      "type": "object",
+      "properties": {
+        "isConnected": { "type": "boolean" },
+        "peerCount": { "type": "integer" },
+        "lastPublishedAt": { "type": "integer" },
+        "meshId": { "type": "string" },
+        "updatedAt": { "type": "integer" }
+      },
+      "required": ["isConnected", "peerCount", "meshId", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles and settings"
+    },
+    "workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/Workspace" },
+      "description": "User workspaces"
+    },
+    "workspaces/{workspaceId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages inside a workspace"
+    },
+    "cells/{cellId}": {
+      "schema": { "$ref": "#/entities/Cell" },
+      "description": "Active cells"
+    },
+    "cell_knowledge/{knowledgeId}": {
+      "schema": { "$ref": "#/entities/CellKnowledge" },
+      "description": "Learned cell configurations"
+    },
+    "network_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/NetworkSession" },
+      "description": "Active cell group chats"
+    },
+    "central_knowledge/{knowledgeId}": {
+      "schema": { "$ref": "#/entities/CentralKnowledge" },
+      "description": "Shared group knowledge"
+    },
+    "network_status/{statusId}": {
+      "schema": { "$ref": "#/entities/NetworkStatus" },
+      "description": "Global mesh synchronization points"
+    }
+  }
+}

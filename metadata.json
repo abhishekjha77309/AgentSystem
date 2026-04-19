@@ -1,0 +1,10 @@
+{
+  "name": "Remix: Remix: Antigravity IDE Agent",
+  "description": "An AI-powered agent orchestrator IDE using Gemini to automate tasks, generate code, images, audio, and video.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}
