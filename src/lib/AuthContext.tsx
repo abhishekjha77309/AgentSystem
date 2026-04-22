@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from './firebase';
+
+interface User {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -22,37 +26,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        // Ensure user exists in db
-        const userRef = doc(db, 'users', u.uid);
-        const snap = await getDoc(userRef);
-        if (!snap.exists()) {
-          try {
-            await setDoc(userRef, {
-              uid: u.uid,
-              email: u.email,
-              displayName: u.displayName,
-              photoURL: u.photoURL,
-              createdAt: Date.now()
-            });
-          } catch (err) {
-            console.error("Failed to create user doc", err);
-          }
-        }
-      }
+    // Mock user automatically logs in
+    const mockUser = {
+      uid: 'local-dev-user-id',
+      email: 'dev@local.host',
+      displayName: 'Local Dev',
+      photoURL: null
+    };
+    
+    // Slight artificial delay to simulate initial boot
+    const timer = setTimeout(() => {
+      setUser(mockUser);
       setLoading(false);
-    });
-    return unsub;
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, []);
 
   const signIn = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    setUser({
+      uid: 'local-dev-user-id',
+      email: 'dev@local.host',
+      displayName: 'Local Dev',
+      photoURL: null
+    });
   };
+  
   const logOut = async () => {
-    await signOut(auth);
+    setUser(null);
   };
 
   return (

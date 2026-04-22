@@ -1,7 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { Workspace } from './Workspace';
-import { ScreenWatcher } from './components/ScreenWatcher';
 import { Button } from '@/components/ui/button';
 import { Code, AlertTriangle, RefreshCw } from 'lucide-react';
 
@@ -82,7 +81,6 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <ScreenWatcher />
         <MainLayout />
       </AuthProvider>
     </ErrorBoundary>

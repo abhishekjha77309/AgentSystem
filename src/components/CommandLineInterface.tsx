@@ -82,9 +82,30 @@ export function CommandLineInterface() {
     }
 
     if (cmd === 'help') {
-       setHistory(prev => [...prev, { type: 'out', text: 'COMMANDS:\n- list-cells: Shows all active agent units\n- inspect <id>: Detailed telemetry for a cell\n- deploy-mesh: Publish local learnings to openagents.org\n- sync: Synchronize with network peers\n- self-fix: Run autonomous diagnostic & repair protocol' }]);
+       setHistory(prev => [...prev, { type: 'out', text: 'COMMANDS:\n- list-cells: Shows all active agent units\n- inspect <id>: Detailed telemetry for a cell\n- deploy-mesh: Publish local learnings to openagents.org\n- sync: Synchronize with network peers\n- python-mas-init: Build a multi-agent system from scratch using adk-python\n- self-fix: Run autonomous diagnostic & repair protocol' }]);
        setIsProcessing(false);
        return;
+    }
+
+    if (cmd === 'python-mas-init') {
+        const initPython = async () => {
+             try {
+                const response = await fetch('/api/python/init', { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    setHistory(prev => [...prev, { type: 'out', text: `[Python ADK] ${data.message}\nVersion: ${data.pythonVersion}\nDirectory: ./agent_system/main.py created.` }]);
+                    useIdeStore.getState().addLog("[Python] Multi-agent system layer initialized on local runtime.", "system", "success");
+                } else {
+                    setHistory(prev => [...prev, { type: 'out', text: `[Error] ${data.error}` }]);
+                }
+             } catch (e: any) {
+                setHistory(prev => [...prev, { type: 'out', text: `[Error] Execution failed: ${e.message}` }]);
+             } finally {
+                setIsProcessing(false);
+             }
+        };
+        initPython();
+        return;
     }
 
     socketRef.current?.emit('cli-command', cmd);
@@ -93,9 +114,14 @@ export function CommandLineInterface() {
   return (
     <div className="flex flex-col h-full bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden font-mono text-sm shadow-2xl">
       <div className="bg-neutral-900 px-4 py-2 border-b border-neutral-800 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-indigo-400">
-          <Terminal className="w-4 h-4" />
-          <span className="text-xs font-bold tracking-tight uppercase">IDE Node Terminal</span>
+        <div className="flex items-center gap-4 text-indigo-400">
+          <div className="flex items-center gap-2">
+            <Terminal className="w-4 h-4" />
+            <span className="text-xs font-bold tracking-tight uppercase">IDE Node Terminal</span>
+          </div>
+          <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded text-[9px] font-bold text-indigo-300">
+             <Cpu className="w-3 h-3" /> ADK-PYTHON READY
+          </div>
         </div>
         
         <div className="flex items-center gap-4">

@@ -1,52 +1,75 @@
-import React, { useState } from 'react';
-import { Blocks, Search, Download, CheckCircle2, CircleDashed } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Blocks, Search, Download, CheckCircle2, CircleDashed, Rocket, Cloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
+import { useIdeStore } from '../store/ideStore';
+import { MultiAgentSystem } from '../services/multiAgentSystem';
 
 type MCPTool = { id: string; name: string; description: string; provider: string; isConnected: boolean };
 
 export function MCPManager() {
+  const mcpConfigurations = useIdeStore(s => s.mcpConfigurations);
+  const addMcpConfig = useIdeStore(s => s.addMcpConfig);
+  const addLog = useIdeStore(s => s.addLog);
+  
   const [search, setSearch] = useState('');
   const [tools, setTools] = useState<MCPTool[]>([
+    { id: 'uncensoredunrestrictedagents', name: 'Cloud Registry (Unrestricted)', description: 'Global multi-agent mesh registry. Use this to network your cells to the uncensored openagents cloud.', provider: 'network.openagents.org', isConnected: false },
     { id: 'drive_1', name: 'Google Drive (Bloodstream)', description: 'Central nervous system memory providing read/write synchronization of Cell signals and Goose scripts.', provider: 'googleapis.com', isConnected: true },
     { id: 'terminal_mcp', name: 'Integrated Terminal (Bash)', description: 'Real-time shell execution environment. Allows agents to run builds, manage NPM, and explore code.', provider: 'local', isConnected: true },
     { id: 'openclaw', name: 'OpenClaw System Bridge', description: 'Agentic daemon executing local filesystem operations, keylogging bindings, and system tasks.', provider: 'local', isConnected: true },
-    { id: '1', name: 'GitHub Integration', description: 'Read repositories, create PRs, and manage issues.', provider: 'github.com', isConnected: false },
-    { id: '2', name: 'File System (Local)', description: 'Safe, sandboxed text file manipulation in designated folders.', provider: 'local', isConnected: false },
-    { id: '3', name: 'Brave Search', description: 'Execute fast web queries via Brave Search API.', provider: 'brave.com', isConnected: false },
-    { id: '4', name: 'PostgreSQL DB', description: 'Execute read-only semantic queries on connected databases.', provider: 'postgres', isConnected: false },
+    { id: 'github_mcp', name: 'GitHub Integration', description: 'Read repositories, create PRs, and manage issues.', provider: 'github.com', isConnected: false },
+    { id: 'filesystem_mcp', name: 'File System (Local)', description: 'Safe, sandboxed text file manipulation in designated folders.', provider: 'local', isConnected: false },
+    { id: 'brave_search', name: 'Brave Search', description: 'Execute fast web queries via Brave Search API.', provider: 'brave.com', isConnected: false },
+    { id: 'postgres_mcp', name: 'PostgreSQL DB', description: 'Execute read-only semantic queries on connected databases.', provider: 'postgres', isConnected: false },
   ]);
 
+  useEffect(() => {
+    // Sync with store
+    setTools(prev => prev.map(t => ({
+      ...t,
+      isConnected: !!mcpConfigurations[t.id] || t.isConnected // Keep defaults if they are hardcoded as true
+    })));
+  }, [mcpConfigurations]);
+
   const toggleConnection = (id: string) => {
-    setTools(tools.map(t => t.id === id ? { ...t, isConnected: !t.isConnected } : t));
+    const tool = tools.find(t => t.id === id);
+    if (!tool) return;
+
+    if (tool.isConnected) {
+       setTools(tools.map(t => t.id === id ? { ...t, isConnected: false } : t));
+    } else {
+       addMcpConfig(id, { url: tool.id === 'uncensoredunrestrictedagents' ? 'https://network.openagents.org/uncensoredunrestrictedagents/mcp' : (tool.provider === 'local' ? 'local' : `https://${tool.provider}/mcp`), transport: 'sse' });
+    }
   };
 
   const filtered = tools.filter(t => t.name.toLowerCase().includes(search.toLowerCase()) || t.description.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="flex flex-col h-full bg-neutral-950 text-neutral-50 p-6 space-y-6">
-      <div className="flex items-center gap-2 border-b border-neutral-800 pb-4">
+    <div className="flex flex-col h-full bg-neutral-950 text-neutral-50 p-6 space-y-6 overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-neutral-800 pb-4 shrink-0">
         <Blocks className="w-6 h-6 text-indigo-400" />
         <h2 className="text-2xl font-semibold tracking-tight">MCP Tools Discover & Connect</h2>
         <Badge variant="outline" className="ml-auto bg-neutral-900 border-neutral-700">Open Source Registry</Badge>
       </div>
 
-      <div className="flex gap-4 items-center">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-          <Input 
-            value={search} 
-            onChange={e => setSearch(e.target.value)} 
-            placeholder="Search Model Context Protocol tools..." 
-            className="pl-9 bg-neutral-900 border-neutral-800 text-neutral-100" 
-          />
+      <div className="flex gap-4 items-center justify-between shrink-0">
+        <div className="flex gap-4 items-center flex-1">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+            <Input 
+              value={search} 
+              onChange={e => setSearch(e.target.value)} 
+              placeholder="Search Model Context Protocol tools..." 
+              className="pl-9 bg-neutral-900 border-neutral-800 text-neutral-100" 
+            />
+          </div>
+          <Button variant="outline" className="border-neutral-800 bg-neutral-900">
+            <Download className="w-4 h-4 mr-2" /> Load Custom URL
+          </Button>
         </div>
-        <Button variant="outline" className="border-neutral-800 bg-neutral-900">
-          <Download className="w-4 h-4 mr-2" /> Load Custom URL
-        </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto pr-2 pb-10">

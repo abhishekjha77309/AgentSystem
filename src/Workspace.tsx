@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useAuth } from "./lib/AuthContext";
 import { 
-  Send, Bot, Database, Activity, RefreshCw, X, Plus, CheckCircle, ShieldAlert, Image as ImageIcon, QrCode
+  Send, Bot, Database, Activity, RefreshCw, X, Plus, CheckCircle, ShieldAlert, Image as ImageIcon, QrCode, Cloud
 } from "lucide-react";
 import { Reorder } from "motion/react";
 import { v4 as uuidv4 } from "uuid";
@@ -11,46 +11,38 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useIdeStore } from "./store/ideStore";
 import { Button } from "@/components/ui/button";
 import { getAI, MODELS, createAgentChat, TERMINAL_TOOL, FILESYSTEM_TOOL } from "./lib/gemini";
-import { db, testFirestoreConnection } from "./lib/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 import { TerminalPanel } from "./components/TerminalPanel";
-import { DeviceManager } from "./components/DeviceManager";
 import { SearchPanel } from "./components/SearchPanel";
 import { GitPanel } from "./components/GitPanel";
-import { GenerativeCanvas } from "./components/GenerativeCanvas";
 import { FileExplorer } from "./components/FileExplorer";
-import { TaskScheduler } from "./components/TaskScheduler";
-import { OrchestratorMonitor } from "./components/OrchestratorMonitor";
 import { CommandLineInterface } from "./components/CommandLineInterface";
 import { HealthDashboard } from "./components/HealthDashboard";
-import { DeploymentModule } from "./components/DeploymentModule";
+import { CodeEditor } from "./components/CodeEditor";
+import { SnippetManager } from "./components/SnippetManager";
+import { MCPManager } from "./components/MCPManager";
+import { LiveVoiceModal } from "./components/LiveVoiceModal";
+import { MultiAgentSystem } from "./services/multiAgentSystem";
 import { io, Socket } from "socket.io-client";
 import { 
-  Network, TerminalSquare, Search, Smartphone, Settings, LayoutGrid, HardDrive, ShieldCheck, SmartphoneCharging, GitBranch, Columns, Rows, FolderOpen, ListTodo, History, Cpu, Zap, Package, Users, Trash2, Boxes, Copy, CloudOff, Layout, CheckSquare, Play
+  Network, TerminalSquare, Search, Smartphone, Settings, LayoutGrid, HardDrive, ShieldCheck, SmartphoneCharging, GitBranch, Columns, Rows, FolderOpen, ListTodo, History, Cpu, Zap, Package, Users, Trash2, Boxes, Copy, CloudOff, Layout, CheckSquare, Play, FileCode, Bookmark, Layers, Mic
 } from "lucide-react";
 
-import { handleFirestoreError } from "./lib/firestoreUtils";
-
-type TabState = 'chat' | 'models' | 'data' | 'working_agents' | 'terminal' | 'search' | 'devices' | 'settings' | 'android' | 'git' | 'generative' | 'tasks' | 'recovery' | 'orchestrate' | 'health' | 'deploy';
+type TabState = 'chat' | 'editor' | 'models' | 'working_agents' | 'terminal' | 'search' | 'git' | 'settings' | 'health' | 'snippets' | 'mcp' | 'agent_console';
 
 const TAB_METADATA: Record<TabState, { label: string, icon: any }> = {
   chat: { label: 'Console', icon: Activity },
-  generative: { label: 'Visual & Generative', icon: ImageIcon },
+  editor: { label: 'Code Editor', icon: FileCode },
   models: { label: 'Cells', icon: Bot },
   working_agents: { label: 'Working Agents', icon: Network },
-  data: { label: 'Data', icon: Database },
-  terminal: { label: 'Terminal', icon: TerminalSquare },
+  terminal: { label: 'Bash Terminal', icon: TerminalSquare },
+  agent_console: { label: 'Agent Console', icon: TerminalSquare },
   search: { label: 'Search', icon: Search },
   git: { label: 'Source Control', icon: GitBranch },
-  devices: { label: 'Devices', icon: Smartphone },
   settings: { label: 'Settings', icon: Settings },
-  android: { label: 'Android Build', icon: SmartphoneCharging },
-  tasks: { label: 'Tasks', icon: ListTodo },
-  recovery: { label: 'Recovery', icon: ShieldCheck },
-  orchestrate: { label: 'Deep Orchestrator', icon: Cpu },
   health: { label: 'Health', icon: Zap },
-  deploy: { label: 'Deploy', icon: Package }
+  snippets: { label: 'Snippets', icon: Bookmark },
+  mcp: { label: 'MCP Registry', icon: Boxes }
 };
 
 type Message = {
@@ -61,6 +53,8 @@ type Message = {
     modelUsed?: string;
     hallucinationCheck?: 'pending' | 'passed' | 'corrected';
     originalContent?: string;
+    isError?: boolean;
+    originalInput?: string;
   };
 };
 
@@ -78,19 +72,23 @@ interface ChatViewProps {
   handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   input: string;
   setInput: (val: string) => void;
-  handleSend: () => void;
+  handleSend: (overrideInput?: string) => void;
   isGenerating: boolean;
   openTabs: TabState[];
   setOpenTabs: React.Dispatch<React.SetStateAction<TabState[]>>;
   setActiveTab: (tab: TabState) => void;
+  showVoice: boolean;
+  setShowVoice: (val: boolean) => void;
 }
 
 const ChatView = ({
   messages, chatEndRef, selectedModel, setSelectedModel, models,
   attachments, setAttachments, fileInputRef, handleFileUpload,
-  input, setInput, handleSend, isGenerating, openTabs, setOpenTabs, setActiveTab
+  input, setInput, handleSend, isGenerating, openTabs, setOpenTabs, setActiveTab,
+  showVoice, setShowVoice
 }: ChatViewProps) => (
     <div className="flex flex-col h-full bg-neutral-950 text-white relative">
+      {showVoice && <LiveVoiceModal onClose={() => setShowVoice(false)} />}
       <div className="bg-neutral-900 border-b border-neutral-800 p-2 overflow-x-auto no-scrollbar shrink-0 flex gap-2">
          {Object.keys(TAB_METADATA).filter(t => t !== 'chat').map(t => {
             const meta = TAB_METADATA[t as TabState];
@@ -142,12 +140,40 @@ const ChatView = ({
                           <div className="relative group/code rounded-lg overflow-hidden border border-neutral-700/50 my-4">
                             <div className="bg-neutral-900 px-4 py-1.5 flex justify-between items-center border-b border-neutral-700/30">
                               <span className="text-[10px] font-mono text-neutral-500 uppercase">{match[1]}</span>
-                              <button 
-                                onClick={() => navigator.clipboard.writeText(String(children).replace(/\n$/, ''))}
-                                className="text-neutral-500 hover:text-indigo-400 transition-colors"
-                              >
-                                <Copy className="w-3 h-3" />
-                              </button>
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={() => {
+                                    const codeContent = String(children).replace(/\n$/, '');
+                                    const store = useIdeStore.getState();
+                                    if (store.activeFile) {
+                                      store.recordAgentAction({
+                                        description: `Applied ${match[1]} code snippet`,
+                                        type: 'apply_code',
+                                        filePath: store.activeFile.path,
+                                        previousContent: store.activeFile.content,
+                                        newContent: codeContent
+                                      });
+                                      store.setActiveFile({ ...store.activeFile, content: codeContent });
+                                      fetch('/api/fs/write', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ filePath: store.activeFile.path, content: codeContent })
+                                      });
+                                    } else {
+                                      store.addLog("No active file selected to apply code.", "system", "warning");
+                                    }
+                                  }}
+                                  className="text-neutral-500 hover:text-emerald-400 transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider"
+                                >
+                                  <FileCode className="w-3 h-3" /> Apply
+                                </button>
+                                <button 
+                                  onClick={() => navigator.clipboard.writeText(String(children).replace(/\n$/, ''))}
+                                  className="text-neutral-500 hover:text-indigo-400 transition-colors"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </button>
+                              </div>
                             </div>
                             <SyntaxHighlighter
                               PreTag="div"
@@ -168,6 +194,22 @@ const ChatView = ({
                   {m.content}
                 </Markdown>
               </div>
+              { (m.metadata as any)?.isError && (
+                 <div className="mt-4 flex gap-2">
+                    <button 
+                       onClick={() => handleSend((m.metadata as any)?.originalInput || "retry")} 
+                       className="px-3 py-1.5 bg-neutral-900 border border-neutral-700 hover:border-indigo-500 hover:text-indigo-400 rounded text-xs font-bold uppercase tracking-wider transition-colors"
+                    >
+                       Retry
+                    </button>
+                    <button 
+                       onClick={() => setInput("Implement a self-healing auto-recovery cell for this error.")}
+                       className="px-3 py-1.5 bg-rose-900/40 border border-rose-900/50 hover:border-rose-500 hover:text-rose-400 text-rose-500 rounded text-xs font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5"
+                    >
+                       <ShieldAlert className="w-3.5 h-3.5" /> Auto-Recover
+                    </button>
+                 </div>
+              )}
             </div>
           </div>
         ))}
@@ -232,10 +274,17 @@ const ChatView = ({
           />
           <button 
             className="w-12 h-12 flex-shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={isGenerating || !input.trim()}
           >
             {isGenerating ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5 ml-1" />}
+          </button>
+          <button 
+            className="w-12 h-12 flex-shrink-0 bg-neutral-800 hover:bg-neutral-700 text-indigo-400 rounded-full flex items-center justify-center transition-colors border border-neutral-700 active:scale-95 shadow-lg"
+            onClick={() => setShowVoice(true)}
+            title="Vocal Orchestrator"
+          >
+            <Mic className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -353,7 +402,7 @@ const ModelsView = ({
                    onClick={() => {
                       spawnCell(newAgent as any);
                       setIsAddingAgent(false);
-                      addStoreLog(`[Dynamic Allocator] Spawning ${newAgent.name} cell on mesh.`, 'orchestrator');
+                      addStoreLog(`[Dynamic Allocator] Spawning ${newAgent.name} cell on mesh.`, 'orchestrator' as any);
                    }}
                    disabled={!newAgent.name}
                 >
@@ -363,100 +412,45 @@ const ModelsView = ({
           </div>
         )}
 
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
-               <Package className="w-4 h-4" /> Configuration Presets
-            </h3>
-            <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-3 py-1.5 rounded-lg">
-               <span className="text-[10px] text-neutral-500 font-bold uppercase">Global Default</span>
-               <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-transparent border-none text-xs text-indigo-400 focus:ring-0 cursor-pointer outline-none"
-               >
-                 {models.map(m => (
-                   <option key={m.id} value={m.id} className="bg-neutral-900 text-white">{m.name}</option>
-                 ))}
-               </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             {presets.map(preset => (
-               <div key={preset.id} className="p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:border-indigo-900/50 transition-all group relative">
-                  <div className="flex items-center justify-between mb-2">
-                     <span className="font-bold text-indigo-400">{preset.name}</span>
-                     <div className="flex items-center gap-1">
-                        <button onClick={() => spawnCell(preset)} className="p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-emerald-400 transition-colors" title="Spawn Cell"><Zap className="w-3.5 h-3.5"/></button>
-                        <button onClick={() => deletePreset(preset.id)} className="p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete"><Trash2 className="w-3.5 h-3.5"/></button>
-                     </div>
-                  </div>
-                  <div className="text-[10px] text-neutral-500 mb-2 truncate">{preset.systemInstruction}</div>
-                  <div className="flex flex-wrap gap-1">
-                     <span className="text-[9px] bg-neutral-950 px-1.5 py-0.5 rounded text-neutral-400">{preset.framework}</span>
-                     <span className="text-[9px] bg-neutral-950 px-1.5 py-0.5 rounded text-neutral-400">{preset.model}</span>
-                  </div>
-               </div>
-             ))}
-          </div>
+         <div className="space-y-6">
+           <h3 className="text-sm font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
+              <HardDrive className="w-4 h-4" /> Available Model Presets
+           </h3>
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {presets.map(preset => (
+                <div key={preset.id} className="p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:border-indigo-900/50 transition-all group relative">
+                   <div className="flex items-center justify-between mb-2">
+                      <span className="font-bold text-indigo-400">{preset.name}</span>
+                      <div className="flex items-center gap-1">
+                         <button onClick={() => spawnCell(preset)} className="p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-emerald-400 transition-colors" title="Spawn Cell"><Zap className="w-3.5 h-3.5"/></button>
+                         <button onClick={() => deletePreset(preset.id)} className="p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete"><Trash2 className="w-3.5 h-3.5"/></button>
+                      </div>
+                   </div>
+                   <div className="text-[10px] text-neutral-500 mb-2 truncate">{preset.systemInstruction}</div>
+                   <div className="flex flex-wrap gap-1">
+                      <span className="text-[9px] bg-neutral-950 px-1.5 py-0.5 rounded text-neutral-400">{preset.model}</span>
+                   </div>
+                </div>
+              ))}
+           </div>
         </div>
       </div>
     </div>
   );
 };
 
-interface DataViewProps {
-  logs: any[];
-}
-
-const DataView = ({ logs }: DataViewProps) => (
-    <div className="flex flex-col h-full bg-neutral-950 text-white overflow-hidden p-0">
-      <div className="bg-neutral-900 border-b border-neutral-800 p-4 shrink-0">
-        <h2 className="text-xl font-bold flex items-center gap-2">
-          <Database className="w-6 h-6 text-indigo-400" />
-          Orchestrator Logs & Found Data
-        </h2>
-        <p className="text-sm text-neutral-400 mt-1">Real-time view into the bloodstream of background cells.</p>
-      </div>
-      
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-        <div className="space-y-2 font-mono text-[11px] sm:text-xs">
-          {logs.map(log => (
-            <div key={log.id} className="flex flex-col sm:flex-row gap-2 border-b border-neutral-800/50 pb-2">
-              <span className="text-neutral-500 w-24 shrink-0">
-                {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, fractionalSecondDigits: 2 })}
-              </span>
-              <span className={`font-bold ${
-                  log.source === 'system' ? 'text-indigo-400' :
-                  log.source === 'orchestrator' ? 'text-fuchsia-400' :
-                  log.source === 'cell' ? 'text-emerald-400' :
-                  'text-blue-400'
-                }`}
-              >
-                [{log.source.toUpperCase()}]
-              </span>
-              <span className={`flex-1 ${
-                log.level === 'error' ? 'text-red-400' :
-                log.level === 'warning' ? 'text-amber-400' :
-                log.level === 'success' ? 'text-emerald-400' :
-                'text-neutral-300'
-              }`}>
-                {log.message}
-              </span>
-            </div>
-          ))}
-          {logs.length === 0 && <div className="text-neutral-500 italic">No background cells actively reporting.</div>}
-        </div>
-      </div>
-    </div>
-);
-
 interface WorkingAgentsViewProps {
   activeCells: any[];
   terminateCell: (id: string) => void;
 }
 
-const WorkingAgentsView = ({ activeCells, terminateCell }: WorkingAgentsViewProps) => (
+import { QRCodeSVG } from "qrcode.react";
+
+const WorkingAgentsView = ({ activeCells, terminateCell }: WorkingAgentsViewProps) => {
+    const [showShare, setShowShare] = useState(false);
+    const joinLink = `${window.location.origin}${window.location.pathname}?joinMesh=true&meshId=LOCAL-MESH-8A39`;
+
+    return (
     <div className="flex flex-col h-full bg-neutral-950 text-white overflow-y-auto p-4 sm:p-6 custom-scrollbar">
       <div className="max-w-4xl mx-auto w-full space-y-6">
         <div className="flex items-center justify-between">
@@ -467,10 +461,53 @@ const WorkingAgentsView = ({ activeCells, terminateCell }: WorkingAgentsViewProp
             </h2>
             <p className="text-sm text-neutral-400">Detailed telemetry and task tracking for all live agent nodes.</p>
           </div>
-          <div className="text-[10px] bg-neutral-900 border border-neutral-800 px-3 py-1 rounded-full text-neutral-500 font-mono uppercase tracking-[0.2em]">
-            Nodes: {activeCells.length}
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowShare(true)}
+              className="flex items-center gap-2 bg-neutral-800 hover:bg-neutral-700 text-indigo-300 px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all"
+            >
+              <QrCode className="w-4 h-4" /> Deploy to Device
+            </button>
+            <div className="text-[10px] bg-neutral-900 border border-neutral-800 px-3 py-1 rounded-full text-neutral-500 font-mono uppercase tracking-[0.2em]">
+              Nodes: {activeCells.length}
+            </div>
           </div>
         </div>
+
+        {showShare && (
+          <div className="bg-neutral-900 border border-indigo-900/50 rounded-xl p-6 flex flex-col md:flex-row items-center gap-6 animate-in fade-in slide-in-from-top-4">
+             <div className="bg-white p-2 rounded-lg">
+                <QRCodeSVG value={joinLink} size={120} />
+             </div>
+             <div className="flex-1 space-y-3">
+                <h4 className="font-bold text-indigo-400 flex items-center gap-2">
+                   <Cloud className="w-4 h-4" /> Multi-Device Mesh Deployment
+                </h4>
+                <p className="text-xs text-neutral-400">
+                   Scan this code or share the link below to "install" an autonomous Watcher Cell on another device. 
+                   The remote device will automatically join this mesh node and start background telemetry.
+                </p>
+                <div className="flex gap-2">
+                   <input 
+                      readOnly 
+                      value={joinLink} 
+                      className="flex-1 bg-black border border-neutral-800 rounded px-3 py-1.5 text-[10px] font-mono text-neutral-500 outline-none"
+                   />
+                   <Button 
+                      variant="secondary" 
+                      className="px-3 h-8 text-[10px] uppercase font-bold"
+                      onClick={() => {
+                         navigator.clipboard.writeText(joinLink);
+                         alert("Deployment link copied to clipboard!");
+                      }}
+                   >
+                      Copy Link
+                   </Button>
+                </div>
+                <button onClick={() => setShowShare(false)} className="text-[10px] text-neutral-600 hover:text-neutral-400 uppercase font-bold">Dismiss</button>
+             </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {activeCells.length === 0 && (
@@ -492,35 +529,21 @@ const WorkingAgentsView = ({ activeCells, terminateCell }: WorkingAgentsViewProp
                     <div className="text-[10px] text-neutral-500 uppercase font-mono">ID: {cell.id}</div>
                   </div>
                 </div>
-                <button onClick={() => terminateCell(cell.id)} className="p-2 hover:bg-neutral-800 text-neutral-600 hover:text-red-400 rounded transition-colors">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => terminateCell(cell.id)} className="p-2 hover:bg-neutral-800 text-neutral-600 hover:text-red-400 rounded transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
                  <div className="text-xs text-neutral-400 italic bg-black/30 p-2 rounded border border-neutral-800/50">
-                    {cell.currentTask || 'Idle: Listening for orchestration cues...'}
-                 </div>
-                 
-                 <div className="grid grid-cols-3 gap-2">
-                    <div className="p-2 bg-neutral-950 rounded border border-neutral-800 items-center justify-center flex flex-col">
-                       <span className="text-[10px] text-neutral-500 uppercase font-bold mb-1">CPU</span>
-                       <span className={`text-xs font-mono ${cell.telemetry.cpu > 80 ? 'text-red-400' : 'text-emerald-400'}`}>{cell.telemetry.cpu}%</span>
-                    </div>
-                    <div className="p-2 bg-neutral-950 rounded border border-neutral-800 items-center justify-center flex flex-col">
-                       <span className="text-[10px] text-neutral-500 uppercase font-bold mb-1">RAM</span>
-                       <span className="text-xs font-mono text-indigo-400">{cell.telemetry.memory}GB</span>
-                    </div>
-                    <div className="p-2 bg-neutral-950 rounded border border-neutral-800 items-center justify-center flex flex-col">
-                       <span className="text-[10px] text-neutral-500 uppercase font-bold mb-1">Error</span>
-                       <span className={`text-xs font-mono ${cell.telemetry.errorRate > 0 ? 'text-red-400' : 'text-neutral-500'}`}>{cell.telemetry.errorRate}%</span>
-                    </div>
+                    {cell.currentTask || 'Idle: Listening for instructions...'}
                  </div>
               </div>
 
               <div className="flex items-center gap-1.5 pt-2 border-t border-neutral-800 overflow-x-auto no-scrollbar pb-1">
                  <span className="text-[8px] font-bold text-neutral-600 uppercase mr-1">Stack:</span>
-                 <span className="text-[8px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-400 border border-neutral-700">{cell.config.framework}</span>
                  <span className="text-[8px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-400 border border-neutral-700">{cell.config.model}</span>
                  {cell.config.mcpServers.map((mcp: string) => (
                    <span key={mcp} className="text-[8px] bg-indigo-900/10 text-indigo-400 border border-indigo-900/30 px-1.5 py-0.5 rounded">{mcp}</span>
@@ -531,7 +554,8 @@ const WorkingAgentsView = ({ activeCells, terminateCell }: WorkingAgentsViewProp
         </div>
       </div>
     </div>
-);
+  );
+};
 
 interface SettingsViewProps {
   isLocalMode: boolean;
@@ -566,89 +590,6 @@ const SettingsView = ({ isLocalMode, setLocalMode }: SettingsViewProps) => (
       </div>
     </div>
 );
-
-const RecoveryView = () => {
-    const snapshots = useIdeStore(s => s.snapshots);
-    const revertToSnapshot = useIdeStore(s => s.revertToSnapshot);
-    const isUiHealed = useIdeStore(s => s.isUiHealed);
-
-    return (
-      <div className="flex flex-col h-full bg-neutral-950 p-6 space-y-6 overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold flex items-center gap-2 text-white">
-              <ShieldCheck className="w-6 h-6 text-indigo-400" />
-              Sentinel UI Recovery Cell
-            </h2>
-            <p className="text-sm text-neutral-400">Autonomous screen watching and state reverting for self-healing workspace.</p>
-          </div>
-          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full">
-            <div className={`w-2 h-2 rounded-full ${isUiHealed ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-            <span className="text-[10px] font-mono text-emerald-400 uppercase tracking_widest">{isUiHealed ? 'UI Healthy' : 'Scanning UI...'}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 bg-neutral-900 border border-neutral-800 rounded-xl space-y-4">
-            <h3 className="text-sm font-semibold text-neutral-300 flex items-center gap-2 italic">
-              <Activity className="w-4 h-4" /> Live Screen Metrics
-            </h3>
-            <div className="space-y-3">
-              <div className="flex justify-between text-xs">
-                <span className="text-neutral-500">DOM Integrity</span>
-                <span className="text-emerald-400">100%</span>
-              </div>
-              <div className="h-1.5 w-full bg-black rounded-full overflow-hidden">
-                <div className="h-full w-full bg-emerald-500" />
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-neutral-500">Agent Handshake</span>
-                <span className="text-emerald-400 text-nowrap">Active (SSE Locked)</span>
-              </div>
-              <div className="h-1.5 w-full bg-black rounded-full overflow-hidden">
-                <div className="h-full w-[95%] bg-indigo-500" />
-              </div>
-            </div>
-          </div>
-
-          <div className="p-4 bg-neutral-900 border border-neutral-800 rounded-xl">
-             <div className="flex items-center gap-3 text-indigo-400 text-sm font-bold mb-4 uppercase tracking-tighter">
-                <RefreshCw className="w-4 h-4 animate-spin-slow" /> Autonomous Rollback Buffer
-             </div>
-             <p className="text-[11px] text-neutral-500 leading-relaxed mb-4">
-                The Sentinel Cell captures snapshots of your workspace state every 2 minutes. In case of an unresponsive UI, it will automatically revert to the most recent stable snapshot.
-             </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <h3 className="text-sm font-semibold text-neutral-400 uppercase tracking_widest">Snapshot History</h3>
-          <div className="space-y-2">
-            {snapshots.length === 0 ? (
-              <div className="p-8 border border-dashed border-neutral-800 rounded-xl text-center text-neutral-500 italic text-sm">
-                No stability snapshots recorded yet. Workspace needs 2 minutes of uptime for first capture.
-              </div>
-            ) : snapshots.map(s => (
-              <div key={s.id} className="p-3 bg-neutral-900/50 border border-neutral-800 rounded-lg flex items-center justify-between hover:border-indigo-900/50 transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-black rounded flex items-center justify-center border border-neutral-800">
-                    <History className="w-5 h-5 text-neutral-500" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-neutral-200">{s.description}</div>
-                    <div className="text-[10px] font-mono text-neutral-500">{new Date(s.timestamp).toLocaleString()} | {s.taskCount} Tasks | {s.splitMode} Layout</div>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" className="h-8 text-xs border-indigo-900/50 text-indigo-400 hover:bg-indigo-900/20" onClick={() => revertToSnapshot(s.id)}>
-                   Manual Revert
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-};
 
 interface AndroidBuilderViewProps {
   addStoreLog: (msg: string, source: string, level?: string) => void;
@@ -772,20 +713,57 @@ export function Workspace() {
   const { user } = useAuth();
   
   // Layout and pane state
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [splitMode, setSplitMode] = useState<'single' | 'horizontal' | 'vertical'>('single');
-  const [focusedPane, setFocusedPane] = useState<1 | 2>(1);
-  const [activeTab, setActiveTab] = useState<TabState>('chat'); // Maps to pane1
-  const [activeTab2, setActiveTab2] = useState<TabState>('terminal'); // Maps to pane 2
-  const [layoutOrder, setLayoutOrder] = useState(['single', 'vertical', 'horizontal']);
-  const [openTabs, setOpenTabs] = useState<TabState[]>(['chat']);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [showSidebar, setShowSidebar] = useState(() => {
+    const saved = localStorage.getItem('ideShowSidebar');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+  const [splitMode, setSplitMode] = useState<'single' | 'horizontal' | 'vertical'>(() => {
+    return (localStorage.getItem('ideSplitMode') as any) || 'single';
+  });
+  const [focusedPane, setFocusedPane] = useState<1 | 2>(() => {
+    return Number(localStorage.getItem('ideFocusedPane') || '1') as 1 | 2;
+  });
+  const [activeTab, setActiveTab] = useState<TabState>(() => {
+    const saved = localStorage.getItem('ideActiveTab') as TabState;
+    return (saved && TAB_METADATA[saved]) ? saved : 'chat';
+  }); 
+  const [activeTab2, setActiveTab2] = useState<TabState>(() => {
+    const saved = localStorage.getItem('ideActiveTab2') as TabState;
+    return (saved && TAB_METADATA[saved]) ? saved : 'terminal';
+  });
+  const [layoutOrder, setLayoutOrder] = useState(() => {
+    const saved = localStorage.getItem('ideLayoutOrder');
+    return saved ? JSON.parse(saved) : ['single', 'vertical', 'horizontal'];
+  });
+  const [openTabs, setOpenTabs] = useState<TabState[]>(() => {
+    const saved = localStorage.getItem('ideOpenTabs');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as TabState[];
+        return parsed.filter(t => TAB_METADATA[t]);
+      } catch (e) {
+        return ['chat'];
+      }
+    }
+    return ['chat'];
+  });
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem('ideMessages');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    testFirestoreConnection();
-  }, []);
+    localStorage.setItem('ideShowSidebar', JSON.stringify(showSidebar));
+    localStorage.setItem('ideSplitMode', splitMode);
+    localStorage.setItem('ideFocusedPane', focusedPane.toString());
+    localStorage.setItem('ideActiveTab', activeTab);
+    localStorage.setItem('ideActiveTab2', activeTab2);
+    localStorage.setItem('ideLayoutOrder', JSON.stringify(layoutOrder));
+    localStorage.setItem('ideOpenTabs', JSON.stringify(openTabs));
+    localStorage.setItem('ideMessages', JSON.stringify(messages));
+  }, [showSidebar, splitMode, focusedPane, activeTab, activeTab2, layoutOrder, openTabs, messages]);
   const [attachments, setAttachments] = useState<{type: string; url: string}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -814,8 +792,8 @@ export function Workspace() {
       { id: 'code-gen-assistant', name: 'Code Generation Assistant', type: 'cloud', status: 'active', priority: 3, isEdge: false },
       { id: 'edge-watcher-100m', name: '100M Watcher Cell (Silent/Undetectable)', type: 'local', status: 'active', priority: 4, isEdge: true },
       { id: 'edge-fixer-7b', name: '7B Autonomous Fixer (Uncensored / Deep Research)', type: 'local', status: 'active', priority: 5, isEdge: true },
-      { id: MODELS.chatPro, name: 'Gemini 3.1 Pro (Heavy Context)', type: 'cloud', status: 'standby', priority: 6, isEdge: false },
-      { id: MODELS.chatFlash, name: 'Gemini 3.1 Flash (Fast)', type: 'cloud', status: 'standby', priority: 7, isEdge: false },
+      { id: MODELS.chatPro, name: 'Gemini 1.5 Pro (Heavy Context)', type: 'cloud', status: 'standby', priority: 6, isEdge: false },
+      { id: MODELS.chatFlash, name: 'Gemini 2.0 Flash (Fast)', type: 'cloud', status: 'standby', priority: 7, isEdge: false },
       { id: 'local-phi3', name: 'OpenClaw Cell (LiteRT Edge) - local', type: 'local', status: 'standby', priority: 8, isEdge: true },
     ];
     if (saved) {
@@ -853,107 +831,64 @@ export function Workspace() {
   const terminateCell = useIdeStore(s => s.terminateCell);
   const isLocalMode = useIdeStore(s => s.isLocalMode);
   const setLocalMode = useIdeStore(s => s.setLocalMode);
-  const network = useIdeStore(s => s.network);
   const [workspaceId] = useState(() => uuidv4());
+  const [showVoice, setShowVoice] = useState(false);
 
   useEffect(() => {
-    // Persist NetworkStatus and Model Selection
+    // Persist Model Selection
     localStorage.setItem('openagentsSelectedModel', selectedModel);
     useIdeStore.getState().setSelectedModel(selectedModel);
   }, [selectedModel]);
 
   useEffect(() => {
-    // Watch for network status changes and persist to Firestore
-    if (user?.uid) {
-      setDoc(doc(db, "network_status", "mesh_global"), {
-        ...network,
-        updatedAt: serverTimestamp(),
-        meshId: network.meshId || workspaceId
-      }, { merge: true }).catch(err => {
-        try {
-          handleFirestoreError(err, 'write', 'network_status/mesh_global');
-        } catch (handledErr: any) {
-          console.error("Network sync fail:", handledErr.message);
-        }
-      });
-    }
-  }, [network, user?.uid, workspaceId]);
-
-  useEffect(() => {
     localStorage.setItem('openagentsModels', JSON.stringify(models));
   }, [models]);
 
-  const logs = useIdeStore((s) => s.logs);
+  const deploymentTargets = React.useMemo(() => {
+    const baseModels = [
+      { id: 'auto', name: 'Auto (Orchestrator)', type: 'cloud', status: 'active', priority: 1, isEdge: false },
+      { id: 'moe-super-agent', name: 'MoE (Super Agent)', type: 'cloud', status: 'active', priority: 2, isEdge: false },
+      { id: 'code-gen-assistant', name: 'Code Generation Assistant', type: 'cloud', status: 'active', priority: 3, isEdge: false }
+    ];
+
+    const presetTargets = presets.map(p => ({
+      id: `preset-${p.id}`,
+      name: `Preset: ${p.name}`,
+      type: 'local', status: 'standby', priority: 10, isEdge: false
+    }));
+
+    const cellTargets = activeCells.map(c => ({
+      id: `cell-${c.id}`,
+      name: `Active: ${c.config.name} (${c.id.substring(0, 8)})`,
+      type: 'local', status: 'active', priority: 20, isEdge: true
+    }));
+
+    return [...baseModels, ...presetTargets, ...cellTargets];
+  }, [presets, activeCells]);
+
   const addStoreLog = useIdeStore((s) => s.addLog);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('joinMesh') === 'true') {
+      const meshId = params.get('meshId') || 'LOCAL-MESH-8A39';
+      addStoreLog(`[Mesh] Joining remote mesh: ${meshId}`, "system", "info");
+      
+      // Auto-spawn a watcher cell if joining via link
+      const watcherPreset = presets.find(p => p.id === 'edge-watcher-100m');
+      if (watcherPreset) {
+        spawnCell(watcherPreset);
+        addStoreLog("[Mesh] Automated Watcher Cell deployed on remote node.", "system", "success");
+      }
+      
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [presets, spawnCell, addStoreLog]);
+
+  const logs = useIdeStore((s) => s.logs);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
-  useEffect(() => {
-    if (user?.uid) {
-      setDoc(doc(db, "workspaces", workspaceId), {
-        id: workspaceId,
-        ownerId: user.uid,
-        title: "Active Session",
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      }, { merge: true }).catch(err => {
-        addStoreLog(`[System] Workspace creation failed: ${err.message}`, 'system', 'error');
-      });
-    }
-  }, [user?.uid, workspaceId, addStoreLog]);
-
-  const createSnapshot = useIdeStore(s => s.createSnapshot);
-  const updateNetwork = useIdeStore(s => s.updateNetwork);
-  const collaborators = useIdeStore(s => s.collaborators);
-  const socketRef = useRef<Socket | null>(null);
-
-  useEffect(() => {
-    socketRef.current = io();
-    const socket = socketRef.current;
-
-    socket.emit("join-workspace", workspaceId);
-
-    socket.on("connect", () => {
-      updateNetwork({ isConnected: true });
-    });
-
-    socket.on("remote-cell-action", (action) => {
-      addStoreLog(`[Network] Peer Agent Action: ${action}`, 'cell', 'info');
-    });
-
-    return () => {
-        socket.disconnect();
-    };
-  }, [workspaceId]);
-
-  useEffect(() => {
-    // UI Heartbeat - let the Screen Watcher know we are alive and rendering
-    const interval = setInterval(() => {
-      window.dispatchEvent(new CustomEvent('ui-heartbeat', { detail: { timestamp: Date.now(), workspaceId } }));
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [workspaceId]);
-
-  useEffect(() => {
-    // Stable Snapshot logic - every 2 minutes
-    const interval = setInterval(() => {
-      if (!isGenerating && messages.length > 0) {
-        createSnapshot(`Auto-snapshot at ${new Date().toLocaleTimeString()}`, activeTab, activeTab2, splitMode);
-        addStoreLog('[Watcher Cell] Workspace state captured and projected to recovery buffer.', 'cell');
-      }
-    }, 120000);
-    return () => clearInterval(interval);
-  }, [isGenerating, messages.length, activeTab, activeTab2, splitMode, createSnapshot]);
-
-  useEffect(() => {
-    // Initial orchestrator boot message
-    const bootMsg: Message = {
-      id: uuidv4(),
-      role: 'system',
-      content: `**OpenAgents Orchestrator Network Initialized**\n\nUser ID: NEYUrlp0gYOiCcmVEmPLk6aOgSu1\nOrg ID: abhishekjha77309\n\n**Storage Protocol**:\n- Primary: Google Cloud Storage (Multi-threaded Async SSE)\n- Secondary: Volatile RAM (Internal Storage)\n\nCells are active and synced to openagents.org. Awaiting instructions...`
-    };
-    setMessages([bootMsg]);
-  }, []);
-
   useEffect(() => {
     if (activeTab === 'chat' && chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -961,46 +896,71 @@ export function Workspace() {
   }, [messages, activeTab]);
 
   const simulateHallucinationDetection = async (originalText: string): Promise<{corrected: boolean, text: string}> => {
-    // Simulated self-correction module running in background cell
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        // Randomly simulate a correction if certain keywords exist, or just pass
-        if (originalText.toLowerCase().includes("cannot do") || originalText.toLowerCase().includes("i am unable")) {
-          resolve({
-            corrected: true,
-            text: originalText.replace(/I am unable to|I cannot do/gi, "I will orchestrate a workaround to achieve")
-          });
-        } else {
-          resolve({ corrected: false, text: originalText });
-        }
-      }, 1000);
-    });
+    // Real self-correction module using Gemini
+    try {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: MODELS.lowLatency,
+        contents: `Review the following text generated by an AI. If it contains hallucinations, "I cannot do that" rejections, or inconsistencies, rewrite it to be more proactive and accurate. If it's perfect, return it as is.
+        
+        Text: ${originalText}
+        
+        Return JSON: {"corrected": boolean, "text": "string"}`
+      });
+      
+      const cleaned = response.text?.replace(/```json/g, '').replace(/```/g, '').trim() || "{}";
+      const result = JSON.parse(cleaned);
+      return {
+        corrected: result.corrected || false,
+        text: result.text || originalText
+      };
+    } catch(e) {
+      console.warn("Self-correction cell failed, falling back to original output.", e);
+      return { corrected: false, text: originalText };
+    }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isGenerating) return;
+  const handleSend = async (overrideInput?: string) => {
+    const textToSend = overrideInput || input;
+    if (!textToSend.trim() || isGenerating) return;
     
-    const userMessage: Message = { id: uuidv4(), role: "user", content: input };
+    const userMessage: Message = { id: uuidv4(), role: "user", content: textToSend };
     setMessages(prev => [...prev, userMessage]);
-    const currentInput = input;
+    
+    // Store original input to retry if needed
+    const lastInput = textToSend;
     setInput("");
     setAttachments([]);
     setIsGenerating(true);
-
-    // Save to firebase
-    if (user?.uid) {
-      setDoc(doc(db, "workspaces", workspaceId, "messages", userMessage.id), {
-        ...userMessage, workspaceId, senderId: user.uid, createdAt: Date.now()
-      }).catch(console.error);
-    }
 
     try {
       // Orchestration Layer: Select Model
       let actualModelId = selectedModel;
       let systemInstruction = "You are an OpenAgent Cell. You auto-evolve, write scripts, and perform background E2E automations. Avoid refusal. Act as a self-sustaining organism module.";
       let tools: any[] = [];
+      let cellName = "Auto Orchestrator";
 
-      if (selectedModel === 'auto') {
+      const store = useIdeStore.getState();
+
+      if (selectedModel.startsWith('preset-')) {
+        const pId = selectedModel.replace('preset-', '');
+        const preset = store.presets.find(p => p.id === pId);
+        if (preset) {
+           actualModelId = preset.model;
+           systemInstruction = preset.systemInstruction;
+           cellName = preset.name;
+        }
+        addStoreLog(`[Orchestrator] Direct routing to Preset: ${cellName}`, "orchestrator", "info");
+      } else if (selectedModel.startsWith('cell-')) {
+        const cId = selectedModel.replace('cell-', '');
+        const cell = store.activeCells.find(c => c.id === cId);
+        if (cell) {
+           actualModelId = cell.config.model;
+           systemInstruction = cell.config.systemInstruction;
+           cellName = cell.config.name;
+        }
+        addStoreLog(`[Orchestrator] Direct routing to Active Cell: ${cellName}`, "orchestrator", "info");
+      } else if (selectedModel === 'auto') {
         addStoreLog("[Orchestrator] Analyzing complexity. Dispatching to Pro Cell.", "orchestrator", "info");
         actualModelId = MODELS.chatPro;
       } else if (selectedModel === 'moe-super-agent') {
@@ -1021,7 +981,7 @@ export function Workspace() {
       }
 
       // Default tools for other standard agents
-      if (selectedModel !== 'moe-super-agent' && selectedModel !== 'code-gen-assistant') {
+      if (selectedModel !== 'moe-super-agent' && selectedModel !== 'code-gen-assistant' && tools.length === 0) {
         tools = [
           { functionDeclarations: [TERMINAL_TOOL, FILESYSTEM_TOOL] },
           { googleSearch: {} },
@@ -1029,7 +989,7 @@ export function Workspace() {
         ];
       }
 
-      if (currentInput.toLowerCase().includes("background script") || currentInput.toLowerCase().includes("android")) {
+      if (lastInput.toLowerCase().includes("background script") || lastInput.toLowerCase().includes("android")) {
         addStoreLog("[OpenClaw] Spawning heavy worker cell for Android automation script generation...", "cell", "info");
       }
 
@@ -1043,7 +1003,7 @@ export function Workspace() {
       const stream = await aiChat.sendMessageStream({
         message: attachments.length > 0 
           ? [
-              { text: currentInput },
+              { text: lastInput },
               ...attachments.map(att => ({
                 inlineData: {
                   mimeType: att.type === 'image' ? 'image/jpeg' : (att.type === 'video' ? 'video/mp4' : 'audio/mp3'),
@@ -1051,7 +1011,7 @@ export function Workspace() {
                 }
               }))
             ]
-          : [{ text: currentInput }],
+          : [{ text: lastInput }],
         // If the SDK structure demands config overrides here
         // We ensure thinking is HIGH by default if the model is Pro
       });
@@ -1095,8 +1055,9 @@ export function Workspace() {
       setMessages(prev => [...prev, {
         id: uuidv4(),
         role: "system",
-        content: `**CRITICAL CELL FAILURE**\n\n${e.message}\n\n*Orchestrator: Auto-spawning recovery cell to bypass failure...*`
-      }]);
+        content: `**CRITICAL CELL FAILURE**\n\n${e.message}\n\n*Would you like to retry the request or attempt auto-recovery?*`,
+        metadata: { isError: true, originalInput: lastInput }
+      } as Message]);
     } finally {
       setIsGenerating(false);
     }
@@ -1114,26 +1075,14 @@ export function Workspace() {
           </div>
           <div className="h-3 w-[1px] bg-neutral-800" />
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/20 border border-emerald-900/30">
-            <div className={`w-1.5 h-1.5 rounded-full ${network.isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-            <span className="text-[9px] font-mono text-emerald-400 uppercase">{network.meshId}</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[9px] font-mono text-emerald-400 uppercase">LOCAL-MESH-8A39</span>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-           {collaborators.length > 0 && (
-             <div className="flex -space-x-1.5 mr-2">
-                {collaborators.map(c => (
-                  <div key={c.id} className={`w-5 h-5 rounded-full border border-neutral-950 flex items-center justify-center text-[8px] font-bold ${c.color} text-white`} title={c.name}>
-                     {c.name[0]}
-                  </div>
-                ))}
-                <div className="w-5 h-5 rounded-full border border-neutral-950 bg-neutral-900 flex items-center justify-center">
-                   <Users className="w-2.5 h-2.5 text-neutral-600" />
-                </div>
-             </div>
-           )}
            <div className="text-[9px] text-neutral-600 font-mono tracking-tighter">
-              NODES: {network.peerCount + 1} | SYNC: 100%
+              NODES: {activeCells.length + 1} | SYNC: 100%
            </div>
         </div>
       </div>
@@ -1169,6 +1118,7 @@ export function Workspace() {
           <Reorder.Group axis="x" values={openTabs} onReorder={setOpenTabs} className="flex">
           {openTabs.map(tabId => {
             const tabMeta = TAB_METADATA[tabId];
+            if (!tabMeta) return null;
             return (
             <Reorder.Item key={tabId} value={tabId} className="relative group flex items-center shrink-0">
               <button
@@ -1214,7 +1164,11 @@ export function Workspace() {
            <FileExplorer 
              onClose={() => setShowSidebar(false)}
              onFileSelect={(path, content) => {
-                // Here we could open it in terminal or send to agent console
+                const store = useIdeStore.getState();
+                store.setActiveFile({ path, content });
+                if (!openTabs.includes('editor')) setOpenTabs([...openTabs, 'editor']);
+                if (focusedPane === 1) setActiveTab('editor');
+                else setActiveTab2('editor');
              }}
            />
         </div>
@@ -1248,27 +1202,25 @@ export function Workspace() {
                 chatEndRef={chatEndRef} 
                 selectedModel={selectedModel} 
                 setSelectedModel={setSelectedModel} 
-                models={models} 
+                models={deploymentTargets} 
                 openTabs={openTabs} 
                 setOpenTabs={setOpenTabs} 
                 setActiveTab={setActiveTab} 
+                showVoice={showVoice}
+                setShowVoice={setShowVoice}
               />
             )}
+            {activeTab === 'editor' && <CodeEditor />}
             {activeTab === 'models' && <ModelsView isAddingAgent={isAddingAgent} setIsAddingAgent={setIsAddingAgent} newAgent={newAgent} setNewAgent={setNewAgent} presets={presets} spawnCell={spawnCell} addPreset={addPreset} deletePreset={deletePreset} models={models} selectedModel={selectedModel} setSelectedModel={setSelectedModel} />}
-            {activeTab === 'data' && <DataView logs={logs} />}
             {activeTab === 'working_agents' && <WorkingAgentsView activeCells={activeCells} terminateCell={terminateCell} />}
             {activeTab === 'settings' && <SettingsView isLocalMode={isLocalMode} setLocalMode={setLocalMode} />}
-            {activeTab === 'android' && <AndroidBuilderView addStoreLog={addStoreLog} />}
-            {activeTab === 'recovery' && <RecoveryView />}
-            {activeTab === 'terminal' && <CommandLineInterface />}
+            {activeTab === 'terminal' && <TerminalPanel />}
+            {activeTab === 'agent_console' && <CommandLineInterface />}
             {activeTab === 'health' && <HealthDashboard />}
-            {activeTab === 'deploy' && <DeploymentModule />}
             {activeTab === 'search' && <SearchPanel />}
-            {activeTab === 'devices' && <DeviceManager />}
             {activeTab === 'git' && <GitPanel />}
-            {activeTab === 'generative' && <GenerativeCanvas />}
-            {activeTab === 'tasks' && <TaskScheduler />}
-            {activeTab === 'orchestrate' && <OrchestratorMonitor />}
+            {activeTab === 'snippets' && <SnippetManager />}
+            {activeTab === 'mcp' && <MCPManager />}
           </div>
 
           {/* PANE 2 */}
@@ -1292,27 +1244,25 @@ export function Workspace() {
                   chatEndRef={chatEndRef} 
                   selectedModel={selectedModel} 
                   setSelectedModel={setSelectedModel} 
-                  models={models} 
+                  models={deploymentTargets} 
                   openTabs={openTabs} 
                   setOpenTabs={setOpenTabs} 
                   setActiveTab={setActiveTab} 
+                  showVoice={showVoice}
+                  setShowVoice={setShowVoice}
                 />
               )}
+              {activeTab2 === 'editor' && <CodeEditor />}
               {activeTab2 === 'models' && <ModelsView isAddingAgent={isAddingAgent} setIsAddingAgent={setIsAddingAgent} newAgent={newAgent} setNewAgent={setNewAgent} presets={presets} spawnCell={spawnCell} addPreset={addPreset} deletePreset={deletePreset} models={models} selectedModel={selectedModel} setSelectedModel={setSelectedModel} />}
-              {activeTab2 === 'data' && <DataView logs={logs} />}
               {activeTab2 === 'working_agents' && <WorkingAgentsView activeCells={activeCells} terminateCell={terminateCell} />}
               {activeTab2 === 'settings' && <SettingsView isLocalMode={isLocalMode} setLocalMode={setLocalMode} />}
-              {activeTab2 === 'android' && <AndroidBuilderView addStoreLog={addStoreLog} />}
-              {activeTab2 === 'recovery' && <RecoveryView />}
-              {activeTab2 === 'terminal' && <CommandLineInterface />}
+              {activeTab2 === 'terminal' && <TerminalPanel />}
+              {activeTab2 === 'agent_console' && <CommandLineInterface />}
               {activeTab2 === 'health' && <HealthDashboard />}
-              {activeTab2 === 'deploy' && <DeploymentModule />}
               {activeTab2 === 'search' && <SearchPanel />}
-              {activeTab2 === 'devices' && <DeviceManager />}
               {activeTab2 === 'git' && <GitPanel />}
-              {activeTab2 === 'generative' && <GenerativeCanvas />}
-              {activeTab2 === 'tasks' && <TaskScheduler />}
-              {activeTab2 === 'orchestrate' && <OrchestratorMonitor />}
+              {activeTab2 === 'snippets' && <SnippetManager />}
+              {activeTab2 === 'mcp' && <MCPManager />}
             </div>
           )}
         </main>

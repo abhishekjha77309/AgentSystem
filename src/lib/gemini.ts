@@ -15,17 +15,17 @@ export const getAI = () => {
 
 // Available features map
 export const MODELS = {
-  chatFlash: 'gemini-3-flash-preview',
-  chatPro: 'gemini-3.1-pro-preview',
-  lowLatency: 'gemini-3.1-flash-lite-preview',
-  imageCreateFast: 'gemini-2.5-flash-image',
-  imageCreatePro: 'gemini-3.1-flash-image-preview',
-  videoLite: 'veo-3.1-lite-generate-preview',
-  videoPro: 'veo-3.1-generate-preview', // Needs API Key
-  tts: 'gemini-3.1-flash-tts-preview',
-  live: 'gemini-3.1-flash-live-preview',
-  lyriaClip: 'lyria-3-clip-preview', // Needs API Key
-  lyriaPro: 'lyria-3-pro-preview' // Needs API Key
+  chatFlash: 'gemini-2.0-flash',
+  chatPro: 'gemini-1.5-pro',
+  lowLatency: 'gemini-1.5-flash',
+  imageCreateFast: 'imagen-3.0-generate-001',
+  imageCreatePro: 'imagen-3.0-generate-001',
+  videoLite: 'veo-2.0-generate-001',
+  videoPro: 'veo-2.0-generate-001', 
+  tts: 'gemini-2.0-flash',
+  live: 'gemini-2.0-flash-exp',
+  lyriaClip: 'gemini-2.0-flash', 
+  lyriaPro: 'gemini-2.0-flash'
 };
 
 // Unified Agent tool wrapper
